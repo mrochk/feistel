@@ -1,2 +1,2 @@
-# feistel
-Feistel cipher implementation.
+# Feistel
+Feistel cipher implementation in Python.
