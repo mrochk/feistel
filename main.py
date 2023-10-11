@@ -1,143 +1,143 @@
 class Feistel:
-    def __init__(self, sbox, pbox, key, rounds, blocksize, m):
-        self.substitutions_box = sbox
-        self.permutations_box  = pbox
-        self.blocksize         = blocksize
-        self.appended          = 0
-        self.rounds            = rounds
-        self.key               = key
-        self.m                 = m
-        # m = k * l with k, l in {x in Z | x mod 4 = 3}
+    def __init__(self, roundf, rounds, bsize, key, derivf):
+        assert bsize    > 0
+        assert len(key) == bsize // 2
+        assert rounds   > 0
 
-    def binlist_2_int(self, l): return int(''.join(map(str, l)), 2)
+        self.round_func      = roundf
+        self.derive_key      = derivf
+        self.rounds          = rounds
+        self.block_size      = bsize
+        self.key             = key
 
-    def int_2_binlist(self, k):
-        return [int(bit) for bit in bin(k)[2:].zfill(len(self.key))]
+    def pad_msg(self, msg: bytes) -> bytes:
+        """
+        Pad the plaintext using the following technique: append the required 
+        number of 0's to the end, and write this number in the last byte. 
+        """
+        bytes_to_append = self.block_size - ((len(msg) + 1) % self.block_size)
+        last_block = bytes([bytes_to_append + 1])
 
-    def split(self, l):
-        assert len(l) % 2 == 0
-        h = len(l) // 2
-        return ([l[i] for i in range(h)], [l[h+i] for i in range(h)])
+        for _ in range(bytes_to_append): msg += bytes([0x0])
 
-    def xor_arrays(self, a, b):
-        assert len(a) == len(b)
-        return [a[e] ^ b[e] for e in range(len(a))]
+        return msg + last_block
+
+    def rm_padding(self, msg: bytes) -> bytes:
+        """
+        Remove the padding from the plaintext.
+        """
+        bytes_appended = msg[len(msg)-1]
+
+        return msg[:len(msg) - bytes_appended]
+
+    def split_msg(self, msg) -> list[bytes]:
+        """
+        Divide the message into blocks of size block_size.
+        """
+        assert len(msg) % self.block_size == 0
+
+        blocks, index = [], 0
+
+        for _ in range(len(msg)):
+            block = []
+            for _ in range(self.block_size):
+                if index >= len(msg): return blocks
+                block.append(msg[index])
+                index += 1
+            blocks.append(block)
+
+        return blocks
+
+    def split_block(self, block : bytes) -> (bytes, bytes):
+        """
+        Split the block in half.
+        """
+        assert len(block) == self.block_size
+
+        half = self.block_size // 2
+        return block[:half], block[half:] # (L, R)
     
-    def derive_key(self):
-        """ 
-        Blum Blum Shub pseudo-random number generator.
-        => Generate a subkey for each round.
+    def XOR(self, bytesA, bytesB):
         """
-        maximum = len(self.key)**2
-        seed    = self.binlist_2_int(self.key)
-        m       = self.m
-        term    = seed**2
-        for _ in range(10): term = term**2 % m
-
-        keys = []
-        for _ in range(self.rounds): keys.append(term**2 % m % maximum)
-        return keys
-
-    def roundfunc(self, right, roundkey):
+        From two list of bytes A and B where |A| = |B|, 
+        returns [A[i] ^ B[i] | 0 <= i < len(A)].
         """
-        The cipher round function, we first split the right 
-        half in two to get a pair (row, col) used to get the
-        corresponding value in the substitution box, and then 
-        permute the result following the permutation box rules.
+        assert len(bytesA) == len(bytesB)
+
+        return [a ^ b for (a, b) in zip(bytesA, bytesB)]
+
+    def encode_block(self, block : bytes) -> bytes:
         """
-        xored       = self.xor_arrays(right, roundkey)
-        left, right = self.split(xored)
-        col         = self.binlist_2_int(left)
-        row         = self.binlist_2_int(right)
-        # Substitute
-        sub = self.substitutions_box[(col, row)]
-        # Permute
-        perm = [sub[self.permutations_box[i]] for i in range(len(sub))]
-        return perm
+        Encode a block.
+        """
+        assert len(block) == self.block_size
 
-    def encode_block(self, block):
-        assert len(block) // 2 == len(self.key)
-        assert len(block) == self.blocksize
+        left, right = self.split_block(block)
+        keys = self.derive_key(self.key, self.rounds)
 
-        keys        = self.derive_key()
-        keys        = [self.int_2_binlist(key) for key in keys]
-        left, right = self.split(block)
-
-        for rnd in range(self.rounds):
-            _left, left = left, right
-            right = self.xor_arrays(_left, self.roundfunc(right, keys[rnd]))
+        for r in range(self.rounds):
+            # L_i+1 = R_i
+            left, prevleft, prevright = right, left, right
+            # R_i+1 = L_i ^ f(R_i ^ K_i)
+            right = self.XOR(prevleft, (self.round_func(self.XOR(prevright, keys[r]))))
 
         return left + right
 
-    def decode_block(self, block):
-        assert len(block) // 2 == len(self.key)
-        assert len(block) == self.blocksize
+    def decode_block(self, block : bytes) -> bytes:
+        """
+        Decode a block.
+        """
+        assert len(block) == self.block_size
 
-        keys        = self.derive_key()
-        keys        = [self.int_2_binlist(key) for key in keys]
-        left, right = self.split(block)
+        left, right = self.split_block(block)
+        keys = self.derive_key(self.key, self.rounds)
 
-        for rnd in range(self.rounds - 1, -1, -1):
-            _right, right = right, left
-            left = self.xor_arrays(_right, self.roundfunc(left, keys[rnd]))
+        for r in range(self.rounds):
+            # R_i = L_i+1
+            right, prevright, prevleft = left, right, left
+            # L_i = R_i+1 ^ f(L_i+1 ^ K_i)
+            left = self.XOR(prevright, (self.round_func(self.XOR(prevleft, keys[r]))))
 
         return left + right
-    
-    def split_msg(self, msg):
-        size, result, block = self.blocksize, result, block
-
-        for i in range(len(msg)):
-            if len(block) == size: result.append(block); block = []
-            block.append(msg[i])
-
-        if len(block) == 0: return result 
-
-        # Padding
-        while len(block) < self.blocksize: block.append(0); self.appended += 1
-
-        result.append(block)
-        return result
-
-    def encode_msg(self, msg):
-        blocks = self.split_msg(msg)
-        f      = self.encode_block
-        aux    = lambda L: [] if L == [] else f(L[0]) + aux(L[1:])
-
-        return aux(blocks)
-
-    def decode_msg(self, msg):
-        blocks = self.split_msg(msg)
-        f      = self.decode_block
-        aux    = lambda L: [] if L == [] else f(L[0]) + aux(L[1:])
-
-        result = aux(blocks)
-        return result[:len(result)-self.appended]
-
-gen_mod = lambda k, l: (4 * k - 1) * (4 * l - 1)
 
 def main():
-    SUBSTBOX = { (0, 0) : [1,1],
-                 (1, 0) : [0,1],
-                 (0, 1) : [1,0],
-                 (1, 1) : [0,0], }
-    PERMBOX    = [1, 0]
-    K, L       = 9879, 4578
-    ROUNDS     = 16
-    BLOCK_SIZE = 4
-    KEY        = [1, 0]
-    MESSAGE    = [0, 1, 1, 1] + [1, 1, 0, 0] + [0, 0, 1, 0] + [0, 1, 1, 0]
-    m          = gen_mod(K, L)
+    def make_round_func(permbox, substbox):
+        def roundf(block : bytes):
+            result = [byte for byte in block]
+            return bytes(result)
+        return roundf
 
-    cipher     = Feistel(SUBSTBOX, PERMBOX, KEY, ROUNDS, BLOCK_SIZE, m)
-    ciphertext = cipher.encode_msg(MESSAGE)
-    decoded    = cipher.decode_msg(ciphertext)
+    def derivf(key, rounds):
+        keys = []
+        for rounds in range(rounds): keys.append(key)
+        return keys
 
-    print(f"Plain text: {cipher.binlist_2_int(MESSAGE):b}")
-    print(f"Ciphertext: {cipher.binlist_2_int(ciphertext):b}")
-    print(f"Decoded   : {cipher.binlist_2_int(decoded):b}")
+    key = []
+    bsize = 4
+    for i in range(bsize//2):
+        key.append(i)
+    key = bytes(key)
 
-    return None
+    cipher = Feistel(make_round_func([], []), rounds=16, bsize=bsize, key=key, derivf=derivf)
+    msg = bytes("hey", "ascii")
+    padded = cipher.pad_msg(msg)
+    print(f"Padded: {padded}")
+    blocks = cipher.split_msg(padded)
+    print(f"Block: {blocks}")
 
-if __name__ == '__main__': 
-    main()
+    encoded = []
+    for block in blocks:
+        encoded.append(cipher.encode_block(block))
+    print(f"Encoded: {encoded}")
+
+    decoded = []
+    for block in encoded:
+        decoded += (cipher.decode_block(block))
+    print(f"Decoded: {decoded}")
+
+    depadded = cipher.rm_padding(decoded)
+    print(f"Depadded: {depadded}")
+    print(f"Og msg: {bytes(depadded)}")
+
+if __name__ == '__main__': main()
 
