@@ -101,43 +101,37 @@ class Feistel:
         return left + right
 
 def main():
-    def make_round_func(permbox, substbox):
-        def roundf(block : bytes):
-            result = [byte for byte in block]
-            return bytes(result)
-        return roundf
+    make_roundf = lambda pbox, sbox: (lambda block: bytes(block))
+    derivf = lambda key, rounds: [key for _ in range(rounds)]
 
-    def derivf(key, rounds):
-        keys = []
-        for rounds in range(rounds): keys.append(key)
-        return keys
+    msg = "hey₤"
+    print(f"Message: {msg}")
 
-    key = []
-    bsize = 4
-    for i in range(bsize//2):
-        key.append(i)
-    key = bytes(key)
+    msg = bytes(msg, "utf-8")
 
-    cipher = Feistel(make_round_func([], []), rounds=16, bsize=bsize, key=key, derivf=derivf)
-    msg = bytes("hey", "ascii")
-    padded = cipher.pad_msg(msg)
+    blocksize = 4
+    key = bytes([i for i in range(blocksize//2)])
+
+    ciph = Feistel(make_roundf([], []), 16, blocksize, key, derivf)
+
+    padded = ciph.pad_msg(msg)
     print(f"Padded: {padded}")
-    blocks = cipher.split_msg(padded)
-    print(f"Block: {blocks}")
 
-    encoded = []
-    for block in blocks:
-        encoded.append(cipher.encode_block(block))
+    blocks = ciph.split_msg(padded)
+    print(f"Splitted: {blocks}")
+
+    encoded = [ciph.encode_block(block) for block in blocks]
     print(f"Encoded: {encoded}")
 
     decoded = []
-    for block in encoded:
-        decoded += (cipher.decode_block(block))
+    for block in encoded: decoded += ciph.decode_block(block)
     print(f"Decoded: {decoded}")
 
-    depadded = cipher.rm_padding(decoded)
-    print(f"Depadded: {depadded}")
-    print(f"Og msg: {bytes(depadded)}")
+    depadded = ciph.rm_padding(decoded)
+    print(f"De-padded: {depadded}")
+
+    decoded_msg = bytes(depadded)
+    print(f"Decoded message: {str(decoded_msg, 'utf-8')}")
 
 if __name__ == '__main__': main()
 
