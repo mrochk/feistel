@@ -1,38 +1,40 @@
 class Feistel:
     def __init__(self, roundf, rounds, bsize, key, derivf):
-        assert bsize    > 0
+        assert bsize > 0
+        assert bsize % 2 == 0
         assert len(key) == bsize // 2
-        assert rounds   > 0
+        assert rounds > 0
 
-        self.round_func      = roundf
-        self.derive_key      = derivf
-        self.rounds          = rounds
-        self.block_size      = bsize
-        self.key             = key
+        self.block_size = bsize
+        self.roundfunc  = roundf
+        self.derivekey  = derivf
+        self.rounds     = rounds
+        self.key        = key
 
-    def pad_msg(self, msg: bytes) -> bytes:
+    def pad(self, msg: bytes) -> bytes:
         """
         Pad the plaintext using the following technique: append the required 
         number of 0's to the end, and write this number in the last byte. 
         """
-        bytes_to_append = self.block_size - ((len(msg) + 1) % self.block_size)
-        last_block = bytes([bytes_to_append + 1])
+        from math import ceil
 
-        for _ in range(bytes_to_append): msg += bytes([0x0])
+        blocks_to_contain_msg = ceil((len(msg)+1) / self.block_size)
+        to_append = (blocks_to_contain_msg * self.block_size) - len(msg)
+        last_block = bytes([to_append])
 
+        for _ in range(to_append-1): msg += bytes([0x0])
         return msg + last_block
 
-    def rm_padding(self, msg: bytes) -> bytes:
+    def remove_padding(self, msg: bytes) -> bytes:
         """
-        Remove the padding from the plaintext.
+        Remove the padding added using `pad` from the plaintext.
         """
-        bytes_appended = msg[len(msg)-1]
+        appended_bytes = msg[len(msg)-1]
+        return msg[:len(msg) - appended_bytes]
 
-        return msg[:len(msg) - bytes_appended]
-
-    def split_msg(self, msg) -> list[bytes]:
+    def splitmsg(self, msg : bytes) -> list[bytes]:
         """
-        Divide the message into blocks of size block_size.
+        Divide the message into blocks of size `block_size`.
         """
         assert len(msg) % self.block_size == 0
 
@@ -48,7 +50,7 @@ class Feistel:
 
         return blocks
 
-    def split_block(self, block : bytes) -> (bytes, bytes):
+    def splitblock(self, block : bytes) -> (bytes, bytes):
         """
         Split the block in half.
         """
@@ -57,81 +59,97 @@ class Feistel:
         half = self.block_size // 2
         return block[:half], block[half:] # (L, R)
     
-    def XOR(self, bytesA, bytesB):
+    def XOR(self, a : bytes, b : bytes) -> bytes:
         """
         From two list of bytes A and B where |A| = |B|, 
         returns [A[i] ^ B[i] | 0 <= i < len(A)].
         """
-        assert len(bytesA) == len(bytesB)
+        assert len(a) == len(b)
 
-        return [a ^ b for (a, b) in zip(bytesA, bytesB)]
+        return [x ^ y for (x, y) in zip(a, b)]
 
     def encode_block(self, block : bytes) -> bytes:
         """
-        Encode a block.
+        Encode a block of size `block_size` using the Feistel cipher model:
+        `L_i+1 = R_i` and `R_i+1 = L_i ^ f(R_i ^ K_i)` where `L`, `R` are the 
+        left and right halves of the block, `^` is the XOR operation, `f` is
+        the round function and `K_i` is the corresponding round key.
         """
         assert len(block) == self.block_size
 
-        left, right = self.split_block(block)
-        keys = self.derive_key(self.key, self.rounds)
+        (left, right) = self.splitblock(block)
+        keys = self.derivekey(self.key, self.rounds)
 
         for r in range(self.rounds):
-            # L_i+1 = R_i
             left, prevleft, prevright = right, left, right
-            # R_i+1 = L_i ^ f(R_i ^ K_i)
-            right = self.XOR(prevleft, (self.round_func(self.XOR(prevright, keys[r]))))
+            right = self.XOR(prevleft, (self.roundfunc(self.XOR(prevright, keys[r]))))
 
-        return left + right
+        return (left + right)
 
     def decode_block(self, block : bytes) -> bytes:
         """
-        Decode a block.
+        Decode a block encoded using the `encode_block` method.
         """
         assert len(block) == self.block_size
 
-        left, right = self.split_block(block)
-        keys = self.derive_key(self.key, self.rounds)
+        left, right = self.splitblock(block)
+        keys = self.derivekey(self.key, self.rounds)
 
         for r in range(self.rounds):
-            # R_i = L_i+1
             right, prevright, prevleft = left, right, left
             # L_i = R_i+1 ^ f(L_i+1 ^ K_i)
-            left = self.XOR(prevright, (self.round_func(self.XOR(prevleft, keys[r]))))
+            left = self.XOR(prevright, (self.roundfunc(self.XOR(prevleft, keys[r]))))
 
-        return left + right
+        return (left + right)
+
+from typing import Callable
 
 def main():
-    make_roundf = lambda pbox, sbox: (lambda block: bytes(block))
+    """
+    Driver test code
+    """
+    def make_round_function(pbox, sbox) -> Callable[[bytes], bytes]:
+        permute = lambda pbox, block: bytes([block[i] for i in pbox])
+
+        def round_function(block : bytes) -> bytes:
+            assert len(pbox) == len(block)
+            permuted = permute(pbox, block)
+            return permuted
+
+        return round_function
+
     derivf = lambda key, rounds: [key for _ in range(rounds)]
 
-    msg = "hey₤"
-    print(f"Message: {msg}")
+    def decode(cipher, encoded, res=[]):
+        for block in encoded: res += cipher.decode_block(block)
+        return res
 
-    msg = bytes(msg, "utf-8")
+    msg       = bytes("Hello, World!", "ascii")
+    blocksize = 8
+    key       = bytes([i for i in range(blocksize//2)])
 
-    blocksize = 4
-    key = bytes([i for i in range(blocksize//2)])
+    cipher = Feistel(
+        roundf = make_round_function([0, 1, 3, 2], []), 
+        rounds = 16, 
+        bsize  = blocksize, 
+        key    = key, 
+        derivf = derivf
+    )
 
-    ciph = Feistel(make_roundf([], []), 16, blocksize, key, derivf)
+    padded     = cipher.pad(msg)
+    blocks     = cipher.splitmsg(padded)
+    encoded    = [cipher.encode_block(block) for block in blocks]
+    decoded    = decode(cipher, encoded)
+    depadded   = cipher.remove_padding(decoded)
+    decodedmsg = bytes(depadded)
 
-    padded = ciph.pad_msg(msg)
-    print(f"Padded: {padded}")
-
-    blocks = ciph.split_msg(padded)
-    print(f"Splitted: {blocks}")
-
-    encoded = [ciph.encode_block(block) for block in blocks]
-    print(f"Encoded: {encoded}")
-
-    decoded = []
-    for block in encoded: decoded += ciph.decode_block(block)
-    print(f"Decoded: {decoded}")
-
-    depadded = ciph.rm_padding(decoded)
-    print(f"De-padded: {depadded}")
-
-    decoded_msg = bytes(depadded)
-    print(f"Decoded message: {str(decoded_msg, 'utf-8')}")
+    print(f"Original msg: {msg}")
+    print(f"Padded      : {padded}")
+    print(f"Splitted    : {blocks}")
+    print(f"Encoded     : {encoded}")
+    print(f"Decoded     : {decoded}")
+    print(f"De-padded   : {depadded}")
+    print(f"Decoded msg : {str(decodedmsg, 'utf-8')}")
 
 if __name__ == '__main__': main()
 
