@@ -71,8 +71,8 @@ class Feistel:
     def encode_block(self, block : bytes) -> bytes:
         """
         Encode a block of size `block_size` the following way: `L_i+1 = R_i` 
-        and `R_i+1 = L_i XOR f(R_i XOR K_i)` where `L`, `R` are the left and 
-        right halves of the block, `f` is the round function and `K_i` 
+        and `R_i+1 = L_i XOR F(R_i XOR K_i)` where `L`, `R` are the left and 
+        right halves of the block, `F` is the round function and `K_i` 
         is the corresponding round key.
         """
         assert len(block) == self.block_size
@@ -82,8 +82,8 @@ class Feistel:
 
         for r in range(self.rounds):
             left, prevleft, prevright = right, left, right
-            rf_input = self.XOR(prevright, keys[r])
-            right = self.XOR(prevleft, (self.roundfunc(rf_input)))
+            rounfdf_inp = self.XOR(prevright, keys[r])
+            right = self.XOR(prevleft, (self.roundfunc(rounfdf_inp)))
 
         return left + right
 
@@ -98,7 +98,7 @@ class Feistel:
 
         for r in range(self.rounds):
             right, prevright, prevleft = left, right, left
-            rf_input = self.XOR(prevleft, keys[r])
+            rf_input = self.XOR(prevleft, keys[len(keys)-r-1])
             left = self.XOR(prevright, self.roundfunc(rf_input))
 
         return left + right
