@@ -1,2 +1,6 @@
 # Feistel
-[Feistel network](https://en.wikipedia.org/wiki/Feistel_cipher) framework that can be used to implement block ciphers. Users can provide their own round function, key derivation method, and tweak different parameters.
+[Feistel network](https://en.wikipedia.org/wiki/Feistel_cipher) framework implementation.
+
+Users can provide their own round and key derivation functions, and modify parameters.
+
+An example of its usage can be found in [example.py](example.py).
